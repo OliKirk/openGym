@@ -53,19 +53,26 @@ describe('lookups', () => {
     expect(await lookupBarcode('123', async () => res({}, 404))).toBeNull()
   })
 
-  it('falls back to the classic search when the new one fails', async () => {
+  it('searches through the app’s own route first', async () => {
     const urls = []
-    const list = await searchFoods('skyr', async url => {
-      urls.push(url)
-      if (url.includes('search.openfoodfacts')) return res({}, 503)
-      return res({ products: [skyr] })
-    })
-    expect(urls).toHaveLength(2)
+    const list = await searchFoods('skyr', async url => { urls.push(url); return res({ products: [skyr] }) })
+    expect(urls).toEqual(['api/food-search?q=skyr'])
     expect(list[0].code).toBe('5711953064421')
   })
 
-  it('uses the new search when it answers', async () => {
-    const list = await searchFoods('skyr', async () => res({ hits: [skyr] }))
+  it('falls back to Open Food Facts directly, new search then classic', async () => {
+    const urls = []
+    const list = await searchFoods('skyr', async url => {
+      urls.push(url)
+      if (url.startsWith('api/') || url.includes('search.openfoodfacts')) return res({}, 404)
+      return res({ products: [skyr] })
+    })
+    expect(urls).toHaveLength(3)
+    expect(list[0].code).toBe('5711953064421')
+  })
+
+  it('uses the new search when the own route is missing', async () => {
+    const list = await searchFoods('skyr', async url => (url.startsWith('api/') ? res({}, 404) : res({ hits: [skyr] })))
     expect(list).toHaveLength(1)
   })
 

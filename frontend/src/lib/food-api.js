@@ -1,15 +1,19 @@
 // Looking food up in Open Food Facts (openfoodfacts.org) — a free, open database of packaged food
-// with good coverage of Danish supermarket products. Read-only, no key, answered with CORS, so the
-// browser asks it directly; nothing passes through an openGym server. Only the barcode or the
+// with good coverage of Danish supermarket products. Read-only, no key. Only the barcode or the
 // search words leave the device.
 //
-// Two ways in: a barcode (the product endpoint) and a text search. The search tries the newer
-// search service first and falls back to the classic one, since either can be slow or down.
+// Two ways in: a barcode (the product endpoint, answered with CORS, so the browser asks it
+// directly) and a text search. Open Food Facts' search endpoints send no CORS headers, so a
+// browser cannot read them from another site: the search goes through the app's own
+// /api/food-search first (a Vercel function, frontend/api/food-search.js) and only falls back to
+// asking Open Food Facts directly — the newer search service, then the classic one — where that
+// route does not exist.
 // Every answer is turned into the app's own food shape by parseProduct, which is the part with a
 // test: a product without energy per 100 g is of no use for counting and is dropped.
 
 const FIELDS = 'code,product_name,product_name_da,product_name_en,generic_name,brands,nutriments,serving_size,serving_quantity,serving_quantity_unit,countries_tags'
 const PRODUCT = code => `https://world.openfoodfacts.org/api/v2/product/${encodeURIComponent(code)}.json?fields=${FIELDS}`
+const SEARCH_OWN = q => `api/food-search?q=${encodeURIComponent(q)}`
 const SEARCH_NEW = q => `https://search.openfoodfacts.org/search?q=${encodeURIComponent(q)}&page_size=30&langs=da,en&fields=${FIELDS}`
 const SEARCH_OLD = q => `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q)}&search_simple=1&action=process&json=1&page_size=30&fields=${FIELDS}`
 
@@ -108,10 +112,14 @@ export async function searchFoods(q, fetchFn = defaultFetch) {
   if (query.length < 2) return []
   let firstError = null
   try {
+    const data = await getJSON(SEARCH_OWN(query), fetchFn)
+    if (Array.isArray(data?.products)) return parseProducts(data.products)
+  } catch (e) { firstError = e }
+  try {
     const data = await getJSON(SEARCH_NEW(query), fetchFn)
     const list = parseProducts(data?.hits)
     if (list.length) return list
-  } catch (e) { firstError = e }
+  } catch (e) { firstError = firstError || e }
   try {
     const data = await getJSON(SEARCH_OLD(query), fetchFn)
     return parseProducts(data?.products)
