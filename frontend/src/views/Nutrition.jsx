@@ -6,6 +6,7 @@ import {
   dayEntries, dayTotals, entryTotals, sumTotals, progress, mealForTime, shiftDay, averageTotals,
   rememberFood, filterFoods, foodEntry, quickEntry, addEntry, updateEntry, removeEntry, ensureNutrition, scale,
   DRINKS, DRINK_BY_ID, dayDrinks, dayFluidMl, drinkMacros, fluidByKind, waterGoalOf, suggestWaterMl, addDrink, removeDrink, averageFluidMl,
+  rememberDrink, drinkName,
 } from '../lib/nutrition.js'
 import { lookupBarcode, searchFoods } from '../lib/food-api.js'
 import { fmtDate, fmtNum, todayISO } from '../lib/format.js'
@@ -441,24 +442,93 @@ const clock = ts => { const d = new Date(ts); return String(d.getHours()).padSta
 const DRINK_ICON = { water: 'drop', coffee: 'cup', tea: 'cup', milk: 'drop', juice: 'drop', soda: 'drop', zero: 'drop', sports: 'bolt', shake: 'dumbbell' }
 
 function DrinkSheet({ iso, close }) {
+  const saved = useStore(st => st.S.nutrition?.savedDrinks)
+  const mine = Array.isArray(saved) ? saved : []
+  const [step, setStep] = useState('pick')       // pick | scan | search
   const [kind, setKind] = useState('water')
+  const [product, setProduct] = useState(null)   // a scanned, searched or saved drink
   const [ml, setMl] = useState(250)
-  const d = DRINK_BY_ID[kind]
-  const m = drinkMacros({ kind, ml })
+  const [q, setQ] = useState('')
+  const [results, setResults] = useState(null)
+  const [busy, setBusy] = useState(false)
+
+  const choose = p => { setProduct(p); setMl(p.serving || 330); setStep('pick') }
+  const chooseKind = k => { setProduct(null); setKind(k) }
+  const m = product ? drinkMacros({ per100: product.per100, ml }) : drinkMacros({ kind, ml })
+  const name = product ? product.name : t(DRINK_BY_ID[kind].label)
+
   const add = () => {
     if (!(ml > 0)) return
-    update(s => { addDrink(s, iso, kind, ml) })
+    update(s => {
+      if (product) addDrink(s, iso, rememberDrink(s, product), ml)
+      else addDrink(s, iso, kind, ml)
+    })
     close()
-    toast(t('Added {0}', fmtL(ml) + ' ' + t(d.label).toLowerCase()))
+    toast(t('Added {0}', fmtL(ml) + ' ' + (product ? name : name.toLowerCase())))
   }
+
+  const onCode = useCallback(async code => {
+    const known = (useStore.getState().S.nutrition?.savedDrinks || []).find(x => x.code === code)
+    if (known) { choose(known); return }
+    setStep('pick'); setBusy(true)
+    try {
+      const found = await lookupBarcode(code)
+      if (found) choose(found)
+      else toast(t('That barcode isn’t in the database. Search for the drink or pick a type.'))
+    } catch {
+      toast(t('No connection to the food database. Try again or pick a type.'))
+    } finally { setBusy(false) }
+  }, [])
+
+  const search = async () => {
+    if (q.trim().length < 2 || busy) return
+    setBusy(true); setResults(null)
+    try { setResults(await searchFoods(q.trim())) } catch { setResults([]); toast(t('The food database didn’t answer. Check your connection.')) }
+    finally { setBusy(false) }
+  }
+
+  if (step === 'scan') return <><h3>{t('Scan a drink')}</h3><Scanner onCode={onCode} onCancel={() => setStep('pick')} /></>
+  if (step === 'search') return <>
+    <div className="row" style={{ gap: 8, marginBottom: 10 }}>
+      <button className="iconbtn" onClick={() => setStep('pick')} aria-label={t('Back')}><Icon name="chevronLeft" /></button>
+      <h3 style={{ margin: 0 }}>{t('Search drinks')}</h3>
+    </div>
+    <form onSubmit={e => { e.preventDefault(); search() }} className="row" style={{ gap: 8, marginBottom: 10 }}>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <SearchField value={q} placeholder={t('e.g. Monster or Faxe Kondi')} enterKeyHint="search" onChange={e => { setQ(e.target.value); setResults(null) }} onClear={() => { setQ(''); setResults(null) }} />
+      </div>
+      <Button type="submit" variant="tinted" className="nut-search-btn" disabled={q.trim().length < 2 || busy}>{t('Search')}</Button>
+    </form>
+    {busy && <div className="muted small nut-status">{t('Searching…')}</div>}
+    {results && (results.length
+      ? <div className="sect-b">{results.map((f, i) => <FoodRow key={(f.code || '') + i} food={f} onClick={() => choose(f)} right={f.dk ? <span className="nut-dk">DK</span> : null} />)}</div>
+      : <div className="muted small nut-status">{t('Nothing found. Try other words, or pick a type of drink.')}</div>)}
+  </>
+
   return <>
     <h3>{t('Add a drink')}</h3>
-    <div className="nut-drinks">
-      {DRINKS.map(x => <button key={x.id} className={'nut-chip' + (kind === x.id ? ' on' : '')} onClick={() => setKind(x.id)}>{t(x.label)}</button>)}
+    <div className="nut-actions nut-actions2">
+      <button className="nut-action" onClick={() => setStep('scan')}><Icon name="camera" /><span>{t('Scan barcode')}</span></button>
+      <button className="nut-action" onClick={() => setStep('search')}><Icon name="magnifier" /><span>{t('Search')}</span></button>
     </div>
+    {busy && <div className="muted small nut-status">{t('Looking up the barcode…')}</div>}
+    {mine.length > 0 && <>
+      <div className="nut-sub">{t('Your drinks')}</div>
+      <div className="nut-drinks">
+        {mine.slice(0, 8).map(x => <button key={x.id} className={'nut-chip' + (product?.id === x.id || (product?.code && product.code === x.code) ? ' on' : '')} onClick={() => choose(x)}>{x.name}</button>)}
+      </div>
+    </>}
+    <div className="nut-sub">{t('Type')}</div>
+    <div className="nut-drinks">
+      {DRINKS.map(x => <button key={x.id} className={'nut-chip' + (!product && kind === x.id ? ' on' : '')} onClick={() => chooseKind(x.id)}>{t(x.label)}</button>)}
+    </div>
+    {product && <div className="nut-product">
+      <b>{product.name}</b>
+      <span className="muted small">{[product.brand, fmtNum(product.per100.kcal) + ' kcal · ' + t('sugar/carbs {0} g', g(product.per100.c)) + ' ' + t('per 100 ml')].filter(Boolean).join(' · ')}</span>
+    </div>}
     <label className="nut-field nut-amount"><span>{t('Amount')}</span><span className="nut-input"><NumberField value={ml} onChange={setMl} decimal={false} /><i>ml</i></span></label>
     <div className="nut-chips">
-      {[150, 200, 250, 330, 500, 750].map(c => <button key={c} className={'nut-chip' + (Number(ml) === c ? ' on' : '')} onClick={() => setMl(c)}>{fmtNum(c)} ml</button>)}
+      {[...new Set([product?.serving, 150, 200, 250, 330, 500, 750].filter(Boolean))].slice(0, 7).map(c => <button key={c} className={'nut-chip' + (Number(ml) === c ? ' on' : '')} onClick={() => setMl(c)}>{c === product?.serving ? t('1 can/bottle ({0} ml)', fmtNum(c)) : fmtNum(c) + ' ml'}</button>)}
     </div>
     {m.kcal > 0
       ? <div className="nut-preview">
@@ -497,7 +567,7 @@ function WaterCard({ S, iso }) {
       <div className="nut-water-left small">{ml >= goal ? t('Goal reached') : t('{0} to go', fmtL(goal - ml))}</div>
     </div>
     <div className="nut-bar nut-water-bar"><i style={{ width: pct * 100 + '%', background: 'var(--blue)' }} /></div>
-    {kinds.length > 0 && <div className="nut-kinds small">{kinds.map(k => <span key={k.kind}>{t(k.label)} <b>{fmtL(k.ml)}</b></span>)}</div>}
+    {kinds.length > 0 && <div className="nut-kinds small">{kinds.map(k => <span key={k.kind}>{k.product ? k.label : t(k.label)} <b>{fmtL(k.ml)}</b></span>)}</div>}
     <div className="nut-water-btns">
       <button className="nut-wbtn" onClick={() => quick(250)}><Icon name="drop" /><span>+250 ml</span></button>
       <button className="nut-wbtn" onClick={() => quick(500)}><Icon name="drop" /><span>+500 ml</span></button>
@@ -508,11 +578,10 @@ function WaterCard({ S, iso }) {
         {open ? t('Hide drinks') : t('Show drinks ({0})', list.length)} <Icon name={open ? 'chevronUp' : 'chevronDown'} />
       </button>
       {open && <div className="nut-drink-list">{list.map(d => {
-        const k = DRINK_BY_ID[d.kind]
         const kc = drinkMacros(d).kcal
         return <div key={d.id} className="nut-drink">
-          <Icon name={DRINK_ICON[d.kind] || 'drop'} />
-          <span className="nut-drink-m"><b>{t(k?.label || 'Other')}</b> {fmtL(d.ml)}{kc > 0 ? <span className="muted"> · {fmtNum(kc)} kcal</span> : null}</span>
+          <Icon name={DRINK_ICON[d.kind] || (d.kind === 'product' ? 'bolt' : 'drop')} />
+          <span className="nut-drink-m"><b>{d.kind === 'product' ? drinkName(d) : t(drinkName(d))}</b> {fmtL(d.ml)}{kc > 0 ? <span className="muted"> · {fmtNum(kc)} kcal</span> : null}</span>
           <span className="muted small">{clock(d.t)}</span>
           <button className="nut-x" onClick={() => remove(d)} aria-label={t('Remove')}><Icon name="xmark" /></button>
         </div>

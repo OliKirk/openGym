@@ -97,7 +97,7 @@ describe('the log', () => {
   })
 
   it('gives older profiles a full, empty shape', () => {
-    expect(nutritionOf({})).toEqual({ goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null })
+    expect(nutritionOf({})).toEqual({ goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null, savedDrinks: [] })
   })
 })
 
@@ -165,5 +165,37 @@ describe('drinks', () => {
     addDrink(s, '2026-10-23', 'water', 3000, 1)
     addDrink(s, '2026-10-20', 'water', 2000, 2)
     expect(averageFluidMl(s, '2026-10-23')).toEqual({ days: 2, ml: 2500 })
+  })
+})
+
+import { rememberDrink, drinkName } from './nutrition.js'
+
+describe('scanned drinks', () => {
+  const monster = { name: 'Monster Energy', brand: 'Monster', code: '5060337500401', per100: { kcal: 47, p: 0, c: 11, f: 0 }, serving: 500 }
+
+  it('logs a product drink with its own name and values per 100 ml', () => {
+    const s = {}
+    const d = addDrink(s, '2026-10-23', monster, 500, 1)
+    expect(d).toMatchObject({ kind: 'product', name: 'Monster Energy', code: '5060337500401', ml: 500 })
+    expect(drinkName(d)).toBe('Monster Energy')
+    expect(dayFluidMl(s, '2026-10-23')).toBe(500)
+    expect(dayTotals(s, '2026-10-23')).toMatchObject({ kcal: 235, c: 55 })
+  })
+
+  it('lists each product on its own line next to the built-in kinds', () => {
+    const s = {}
+    addDrink(s, '2026-10-23', monster, 500, 1)
+    addDrink(s, '2026-10-23', 'water', 250, 2)
+    addDrink(s, '2026-10-23', monster, 500, 3)
+    expect(fluidByKind(s, '2026-10-23').map(x => [x.label, x.ml])).toEqual([['Monster Energy', 1000], ['Water', 250]])
+  })
+
+  it('remembers a drink once per barcode, newest first', () => {
+    const s = {}
+    rememberDrink(s, monster, 1)
+    rememberDrink(s, { name: 'Faxe Kondi Booster', brand: 'Royal Unibrew', per100: { kcal: 46 } }, 2)
+    rememberDrink(s, { ...monster, name: 'Monster Energy Original' }, 3)
+    expect(s.nutrition.savedDrinks.map(x => x.name)).toEqual(['Monster Energy Original', 'Faxe Kondi Booster'])
+    expect(s.nutrition.savedDrinks[0].serving).toBe(500)
   })
 })

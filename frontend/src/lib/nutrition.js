@@ -47,7 +47,7 @@ export function macros(m) {
 }
 
 export function emptyNutrition() {
-  return { goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null }
+  return { goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null, savedDrinks: [] }
 }
 
 /** The nutrition block of a profile, always in its full shape — older profiles have none. */
@@ -61,6 +61,7 @@ export function nutritionOf(S) {
     foods: Array.isArray(n.foods) ? n.foods : [],
     drinks: n.drinks && typeof n.drinks === 'object' ? n.drinks : {},
     waterGoal: num(n.waterGoal) || null,
+    savedDrinks: Array.isArray(n.savedDrinks) ? n.savedDrinks : [],
   }
 }
 
@@ -311,22 +312,65 @@ export function drinkTotals(list) {
 export function fluidByKind(S, iso) {
   const by = new Map()
   for (const d of dayDrinks(S, iso)) {
-    const k = DRINK_BY_ID[d.kind] ? d.kind : 'other'
-    by.set(k, (by.get(k) || 0) + num(d.ml))
+    // A scanned product is its own line ("Monster Energy 500 ml"); the built-in kinds group.
+    const k = d.kind === 'product' && d.name ? 'p:' + d.name : DRINK_BY_ID[d.kind] ? d.kind : 'other'
+    const label = d.kind === 'product' && d.name ? d.name : DRINK_BY_ID[d.kind]?.label || 'Other'
+    const cur = by.get(k) || { kind: k, label, product: d.kind === 'product', ml: 0 }
+    cur.ml += num(d.ml)
+    by.set(k, cur)
   }
-  return [...by.entries()].map(([kind, ml]) => ({ kind, label: DRINK_BY_ID[kind]?.label || 'Other', ml: Math.round(ml) })).sort((a, b) => b.ml - a.ml)
+  return [...by.values()].map(x => ({ ...x, ml: Math.round(x.ml) })).sort((a, b) => b.ml - a.ml)
 }
 
-/** A new drink of a known kind (inside a store update). */
+/** The name a drink is shown under: a product's own name, or its kind. */
+export const drinkName = d => (d?.kind === 'product' && d.name) ? d.name : DRINK_BY_ID[d?.kind]?.label || 'Other'
+
+/**
+ * A new drink (inside a store update): a built-in kind by id ('water', 'milk'…) or a product
+ * from a barcode or search — { name, brand, code, per100 } — whose values are per 100 ml.
+ */
 export function addDrink(s, iso, kind, ml, now = Date.now()) {
   const n = ensureNutrition(s)
-  const known = DRINK_BY_ID[kind] || DRINK_BY_ID.water
   const amount = Math.round(num(ml))
   if (!amount) return null
-  const d = { id: now.toString(36) + Math.random().toString(36).slice(2, 7), kind: known.id, ml: amount, per100: macros(known.per100), t: now }
+  const id = now.toString(36) + Math.random().toString(36).slice(2, 7)
+  let d
+  if (kind && typeof kind === 'object') {
+    d = {
+      id, kind: 'product', ml: amount, t: now,
+      name: String(kind.name || '').trim().slice(0, 120) || 'Drink',
+      brand: String(kind.brand || '').trim().slice(0, 80),
+      code: kind.code ? String(kind.code) : '',
+      per100: macros(kind.per100),
+    }
+  } else {
+    const known = DRINK_BY_ID[kind] || DRINK_BY_ID.water
+    d = { id, kind: known.id, ml: amount, per100: macros(known.per100), t: now }
+  }
   n.drinks = n.drinks || {}
   n.drinks[iso] = [...(n.drinks[iso] || []), d]
   return d
+}
+
+/**
+ * Keeps a scanned or searched drink for next time, newest first (inside a store update). The same
+ * barcode, or else the same name and brand, is the same drink. Capped like the food list.
+ */
+export function rememberDrink(s, product, now = Date.now()) {
+  const n = ensureNutrition(s)
+  const clean = {
+    id: product.id || now.toString(36) + Math.random().toString(36).slice(2, 7),
+    name: String(product.name || '').trim().slice(0, 120) || 'Drink',
+    brand: String(product.brand || '').trim().slice(0, 80),
+    code: product.code ? String(product.code) : '',
+    per100: macros(product.per100),
+    serving: num(product.serving) || null,
+    t: now,
+  }
+  const same = n.savedDrinks.find(x => (clean.code && x.code === clean.code) || (key(x.name) === key(clean.name) && key(x.brand) === key(clean.brand)))
+  if (same) clean.id = same.id
+  n.savedDrinks = [clean, ...n.savedDrinks.filter(x => x.id !== clean.id)].slice(0, 60)
+  return clean
 }
 
 export function removeDrink(s, iso, id) {
