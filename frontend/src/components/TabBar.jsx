@@ -59,6 +59,7 @@ export default function TabBar({ onStart }) {
         {running ? <span className="tab-time"><Elapsed start={S.active.start} /></span>
           : <span>{S.active ? (cur === 'workout' ? t('Workout') : S.active.editingWorkoutId ? t('Edit workout') : t('Resume')) : t('Start')}</span>}
       </button>
+      <Tab active={on('food')} icon="food" label={t('Food')} onClick={() => nav('/food')} />
       <Tab active={on('stats')} icon="chart" label={t('Stats')} onClick={() => nav('/stats')} />
       <Tab active={on('library')} icon="dumbbell" label={t('Exercises')} onClick={() => nav('/library')} />
     </nav>

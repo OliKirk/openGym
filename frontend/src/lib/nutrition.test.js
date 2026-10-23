@@ -1,0 +1,123 @@
+import { describe, it, expect } from 'vitest'
+import {
+  bmr, calcGoals, kcalFromMacros, scale, entryTotals, sumTotals, progress, mealForTime, shiftDay,
+  averageTotals, rememberFood, filterFoods, foodEntry, quickEntry, addEntry, updateEntry, removeEntry,
+  nutritionOf, latestWeightKg, dayTotals,
+} from './nutrition.js'
+
+describe('goals', () => {
+  it('uses Mifflin–St Jeor for resting energy', () => {
+    expect(bmr({ sex: 'male', weight: 80, height: 183, age: 24 })).toBeCloseTo(10 * 80 + 6.25 * 183 - 5 * 24 + 5)
+    expect(bmr({ sex: 'female', weight: 60, height: 168, age: 30 })).toBeCloseTo(600 + 1050 - 150 - 161)
+    expect(bmr({ sex: 'male', weight: 80 })).toBe(0)
+  })
+
+  it('sets protein at 2 g/kg, fat at least a quarter of energy, carbs the rest', () => {
+    const g = calcGoals({ sex: 'male', weight: 80, height: 183, age: 24, activity: 1.725, goal: 'maintain' })
+    const tdee = (10 * 80 + 6.25 * 183 - 5 * 24 + 5) * 1.725
+    expect(g.kcal).toBe(Math.round(tdee / 10) * 10)
+    expect(g.p).toBe(160)
+    expect(g.f * 9).toBeGreaterThanOrEqual(g.kcal * 0.25 - 9)
+    expect(Math.abs(kcalFromMacros(g) - g.kcal)).toBeLessThan(15)
+  })
+
+  it('adjusts energy for the goal', () => {
+    const base = { sex: 'male', weight: 80, height: 183, age: 24, activity: 1.55 }
+    const m = calcGoals({ ...base, goal: 'maintain' }).kcal
+    expect(calcGoals({ ...base, goal: 'cut' }).kcal).toBe(m - 400)
+    expect(calcGoals({ ...base, goal: 'bulk' }).kcal).toBe(m + 250)
+  })
+
+  it('returns null for an incomplete profile', () => {
+    expect(calcGoals({ sex: 'male', weight: 80 })).toBeNull()
+    expect(calcGoals(null)).toBeNull()
+  })
+
+  it('reads the newest weigh-in, converting pounds', () => {
+    expect(latestWeightKg({ unit: 'kg', bodyweight: [{ d: '2026-10-02', w: 81 }, { d: '2026-09-01', w: 79 }] })).toBe(81)
+    expect(latestWeightKg({ unit: 'lb', bodyweight: [{ d: '2026-10-02', w: 180 }] })).toBe(81.6)
+    expect(latestWeightKg({ bodyweight: [] })).toBeNull()
+  })
+})
+
+describe('amounts and totals', () => {
+  const skyr = { kcal: 63, p: 11, c: 4, f: 0.2 }
+  it('scales per-100 g values to an amount', () => {
+    expect(scale(skyr, 250)).toEqual({ kcal: 158, p: 27.5, c: 10, f: 0.5 })
+    expect(scale(skyr, 0)).toEqual({ kcal: 0, p: 0, c: 0, f: 0 })
+    expect(scale(skyr, '150,5').kcal).toBe(95)
+  })
+
+  it('totals food and quick-add entries alike', () => {
+    const a = foodEntry({ name: 'Skyr', per100: skyr }, 200, 'breakfast', 1)
+    const b = quickEntry('Pizza', { kcal: 800, p: 30, c: 90, f: 32 }, 'dinner', 2)
+    expect(entryTotals(b)).toEqual({ kcal: 800, p: 30, c: 90, f: 32 })
+    expect(sumTotals([a, b])).toEqual({ kcal: 926, p: 52, c: 98, f: 32.4 })
+  })
+
+  it('reports progress and what is left', () => {
+    expect(progress(1500, 3000)).toEqual({ pct: 0.5, left: 1500 })
+    expect(progress(3300, 3000)).toEqual({ pct: 1, left: -300 })
+    expect(progress(10, 0)).toEqual({ pct: 0, left: null })
+  })
+
+  it('guesses the meal from the time of day', () => {
+    const at = h => new Date(2026, 9, 23, h)
+    expect(mealForTime(at(7))).toBe('breakfast')
+    expect(mealForTime(at(12))).toBe('lunch')
+    expect(mealForTime(at(18))).toBe('dinner')
+    expect(mealForTime(at(15))).toBe('snacks')
+    expect(mealForTime(at(22))).toBe('snacks')
+  })
+
+  it('moves dates across months', () => {
+    expect(shiftDay('2026-10-31', 1)).toBe('2026-11-01')
+    expect(shiftDay('2026-03-01', -1)).toBe('2026-02-28')
+  })
+})
+
+describe('the log', () => {
+  it('adds, edits and removes entries; an emptied day disappears', () => {
+    const s = {}
+    const e = foodEntry({ name: 'Havregryn', per100: { kcal: 370, p: 13, c: 59, f: 7 } }, 80, 'breakfast', 5)
+    addEntry(s, '2026-10-23', e)
+    expect(dayTotals(s, '2026-10-23').kcal).toBe(296)
+    updateEntry(s, '2026-10-23', e.id, { grams: 100 })
+    expect(dayTotals(s, '2026-10-23').kcal).toBe(370)
+    removeEntry(s, '2026-10-23', e.id)
+    expect(s.nutrition.log['2026-10-23']).toBeUndefined()
+  })
+
+  it('averages only the days with food logged', () => {
+    const s = {}
+    addEntry(s, '2026-10-23', quickEntry('', { kcal: 3000, p: 160 }, 'lunch', 1))
+    addEntry(s, '2026-10-21', quickEntry('', { kcal: 2000, p: 140 }, 'lunch', 2))
+    expect(averageTotals(s, '2026-10-23', 7)).toMatchObject({ days: 2, kcal: 2500, p: 150 })
+    expect(averageTotals({}, '2026-10-23')).toBeNull()
+  })
+
+  it('gives older profiles a full, empty shape', () => {
+    expect(nutritionOf({})).toEqual({ goals: null, profile: null, log: {}, foods: [] })
+  })
+})
+
+describe('saved foods', () => {
+  it('keeps one copy per barcode or name+brand, newest first', () => {
+    const s = {}
+    rememberFood(s, { name: 'Skyr naturel', brand: 'Arla', code: '570', per100: { kcal: 63 } }, 1)
+    rememberFood(s, { name: 'Havregryn', brand: 'Øko', per100: { kcal: 370 } }, 2)
+    const again = rememberFood(s, { name: 'Skyr Naturel 0,2%', brand: 'Arla', code: '570', per100: { kcal: 64 } }, 3)
+    expect(s.nutrition.foods).toHaveLength(2)
+    expect(s.nutrition.foods[0].id).toBe(again.id)
+    expect(s.nutrition.foods[0].per100.kcal).toBe(64)
+    rememberFood(s, { name: 'havregryn', brand: 'øko', per100: { kcal: 371 } }, 4)
+    expect(s.nutrition.foods).toHaveLength(2)
+  })
+
+  it('searches saved foods by every word', () => {
+    const foods = [{ name: 'Skyr naturel', brand: 'Arla' }, { name: 'Kyllingebryst', brand: 'Danpo' }, { name: 'Græsk yoghurt', brand: 'Arla' }]
+    expect(filterFoods(foods, 'arla skyr').map(f => f.name)).toEqual(['Skyr naturel'])
+    expect(filterFoods(foods, 'arla')).toHaveLength(2)
+    expect(filterFoods(foods, '')).toHaveLength(3)
+  })
+})
