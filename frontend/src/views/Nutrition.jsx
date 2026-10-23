@@ -5,6 +5,7 @@ import {
   MEALS, MEAL_LABELS, ACTIVITY, GOALS, nutritionOf, calcGoals, kcalFromMacros, latestWeightKg,
   dayEntries, dayTotals, entryTotals, sumTotals, progress, mealForTime, shiftDay, averageTotals,
   rememberFood, filterFoods, foodEntry, quickEntry, addEntry, updateEntry, removeEntry, ensureNutrition, scale,
+  DRINKS, DRINK_BY_ID, dayDrinks, dayFluidMl, drinkMacros, fluidByKind, waterGoalOf, suggestWaterMl, addDrink, removeDrink, averageFluidMl,
 } from '../lib/nutrition.js'
 import { lookupBarcode, searchFoods } from '../lib/food-api.js'
 import { fmtDate, fmtNum, todayISO } from '../lib/format.js'
@@ -77,16 +78,22 @@ function GoalsSheet({ close }) {
   const [activity, setActivity] = useState(saved.activity || 1.725)
   const [goal, setGoal] = useState(saved.goal || 'maintain')
   const [goals, setGoals] = useState(n.goals || { kcal: null, p: null, c: null, f: null })
+  const [water, setWater] = useState(n.waterGoal ?? suggestWaterMl(saved.weight ?? latestWeightKg(S)))
   const profile = { sex, age, height, weight, activity, goal }
   const calc = calcGoals(profile)
 
-  const useCalc = () => { if (calc) setGoals(calc); else toast(t('Fill in age, height and weight first')) }
+  const useCalc = () => {
+    if (!calc) { toast(t('Fill in age, height and weight first')); return }
+    setGoals(calc)
+    setWater(suggestWaterMl(weight))
+  }
   const save = () => {
     if (!goals.kcal) { toast(t('Set a calorie goal')); return }
     update(s => {
       const nn = ensureNutrition(s)
       nn.profile = profile
       nn.goals = { kcal: Math.round(goals.kcal), p: Math.round(goals.p || 0), c: Math.round(goals.c || 0), f: Math.round(goals.f || 0) }
+      nn.waterGoal = water > 0 ? Math.round(water) : null
     })
     close()
     toast(t('Goals saved'))
@@ -120,6 +127,8 @@ function GoalsSheet({ close }) {
     </div>
     {goals.kcal > 0 && macroKcal > 0 && Math.abs(macroKcal - goals.kcal) > 50 &&
       <div className="small" style={{ color: 'var(--orange)', margin: '-4px 2px 10px' }}>{t('Your macros add up to {0} kcal.', fmtNum(macroKcal))}</div>}
+    {field(t('Fluid'), water, setWater, 'ml')}
+    <div className="muted small" style={{ margin: '4px 2px 14px' }}>{t('About 35 ml per kg plus extra for training. Drink more on badminton and gym days.')}</div>
     <Button variant="primary" onClick={save}>{t('Save')}</Button>
     <div style={{ height: 8 }} />
     <Button variant="ghost" className="dim" onClick={close}>{t('Cancel')}</Button>
@@ -424,6 +433,94 @@ function EditQuick({ iso, entry, close, onRemove }) {
 
 const editEntrySheet = (iso, entry) => openSheet(close => <EditEntry iso={iso} entry={entry} close={close} />)
 
+
+/* ---------------------------------------------------------------- drinks -- */
+
+const fmtL = ml => (ml >= 1000 ? (Math.round(ml / 10) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 }) + ' L' : fmtNum(Math.round(ml)) + ' ml')
+const clock = ts => { const d = new Date(ts); return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0') }
+const DRINK_ICON = { water: 'drop', coffee: 'cup', tea: 'cup', milk: 'drop', juice: 'drop', soda: 'drop', zero: 'drop', sports: 'bolt', shake: 'dumbbell' }
+
+function DrinkSheet({ iso, close }) {
+  const [kind, setKind] = useState('water')
+  const [ml, setMl] = useState(250)
+  const d = DRINK_BY_ID[kind]
+  const m = drinkMacros({ kind, ml })
+  const add = () => {
+    if (!(ml > 0)) return
+    update(s => { addDrink(s, iso, kind, ml) })
+    close()
+    toast(t('Added {0}', fmtL(ml) + ' ' + t(d.label).toLowerCase()))
+  }
+  return <>
+    <h3>{t('Add a drink')}</h3>
+    <div className="nut-drinks">
+      {DRINKS.map(x => <button key={x.id} className={'nut-chip' + (kind === x.id ? ' on' : '')} onClick={() => setKind(x.id)}>{t(x.label)}</button>)}
+    </div>
+    <label className="nut-field nut-amount"><span>{t('Amount')}</span><span className="nut-input"><NumberField value={ml} onChange={setMl} decimal={false} /><i>ml</i></span></label>
+    <div className="nut-chips">
+      {[150, 200, 250, 330, 500, 750].map(c => <button key={c} className={'nut-chip' + (Number(ml) === c ? ' on' : '')} onClick={() => setMl(c)}>{fmtNum(c)} ml</button>)}
+    </div>
+    {m.kcal > 0
+      ? <div className="nut-preview">
+          <div><b>{fmtNum(m.kcal)}</b><span>kcal</span></div>
+          <div><b>{g(m.p)}</b><span>{t('Protein')}</span></div>
+          <div><b>{g(m.c)}</b><span>{t('Carbs')}</span></div>
+          <div><b>{g(m.f)}</b><span>{t('Fat')}</span></div>
+        </div>
+      : <div className="muted small" style={{ margin: '12px 2px 14px' }}>{t('Counts as fluid, no calories.')}</div>}
+    <Button variant="primary" disabled={!(ml > 0)} onClick={add}>{t('Add')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" className="dim" onClick={close}>{t('Cancel')}</Button>
+  </>
+}
+
+const drinkSheet = iso => openSheet(close => <DrinkSheet iso={iso} close={close} />)
+
+function WaterCard({ S, iso }) {
+  const goal = waterGoalOf(S)
+  const ml = dayFluidMl(S, iso)
+  const list = [...dayDrinks(S, iso)].sort((a, b) => b.t - a.t)
+  const kinds = fluidByKind(S, iso)
+  const [open, setOpen] = useState(false)
+  const pct = Math.min(1, ml / goal)
+  const quick = amount => {
+    update(s => { addDrink(s, iso, 'water', amount) })
+    toast(t('+{0} water', fmtL(amount)))
+  }
+  const remove = d => update(s => removeDrink(s, iso, d.id))
+  return <div className="card nut-water">
+    <div className="row between" style={{ alignItems: 'flex-end' }}>
+      <div>
+        <div className="muted small">{t('Water & drinks')}</div>
+        <div className="nut-water-n"><b>{fmtL(ml)}</b><span> / {fmtL(goal)}</span></div>
+      </div>
+      <div className="nut-water-left small">{ml >= goal ? t('Goal reached') : t('{0} to go', fmtL(goal - ml))}</div>
+    </div>
+    <div className="nut-bar nut-water-bar"><i style={{ width: pct * 100 + '%', background: 'var(--blue)' }} /></div>
+    {kinds.length > 0 && <div className="nut-kinds small">{kinds.map(k => <span key={k.kind}>{t(k.label)} <b>{fmtL(k.ml)}</b></span>)}</div>}
+    <div className="nut-water-btns">
+      <button className="nut-wbtn" onClick={() => quick(250)}><Icon name="drop" /><span>+250 ml</span></button>
+      <button className="nut-wbtn" onClick={() => quick(500)}><Icon name="drop" /><span>+500 ml</span></button>
+      <button className="nut-wbtn" onClick={() => drinkSheet(iso)}><Icon name="plus" /><span>{t('Other drink')}</span></button>
+    </div>
+    {list.length > 0 && <>
+      <button className="nut-water-toggle small" onClick={() => setOpen(o => !o)}>
+        {open ? t('Hide drinks') : t('Show drinks ({0})', list.length)} <Icon name={open ? 'chevronUp' : 'chevronDown'} />
+      </button>
+      {open && <div className="nut-drink-list">{list.map(d => {
+        const k = DRINK_BY_ID[d.kind]
+        const kc = drinkMacros(d).kcal
+        return <div key={d.id} className="nut-drink">
+          <Icon name={DRINK_ICON[d.kind] || 'drop'} />
+          <span className="nut-drink-m"><b>{t(k?.label || 'Other')}</b> {fmtL(d.ml)}{kc > 0 ? <span className="muted"> · {fmtNum(kc)} kcal</span> : null}</span>
+          <span className="muted small">{clock(d.t)}</span>
+          <button className="nut-x" onClick={() => remove(d)} aria-label={t('Remove')}><Icon name="xmark" /></button>
+        </div>
+      })}</div>}
+    </>}
+  </div>
+}
+
 /* ------------------------------------------------------------------- page -- */
 
 export default function Nutrition() {
@@ -435,6 +532,7 @@ export default function Nutrition() {
   const entries = dayEntries(S, iso)
   const total = dayTotals(S, iso)
   const avg = averageTotals(S, today, 7)
+  const avgFluid = averageFluidMl(S, today, 7)
 
   const copyYesterday = () => {
     const prev = dayEntries(S, shiftDay(iso, -1))
@@ -468,6 +566,8 @@ export default function Nutrition() {
       <MacroBar label={t('Fat')} value={total.f} goal={goals?.f} color="var(--purple)" />
       {!goals && <><div style={{ height: 12 }} /><Button variant="tinted" icon="target" onClick={goalsSheet}>{t('Set your daily goals')}</Button></>}
     </div>
+
+    <WaterCard S={S} iso={iso} />
 
     {MEALS.map(meal => {
       const list = entries.filter(e => (e.meal || 'snacks') === meal)
@@ -506,6 +606,7 @@ export default function Nutrition() {
         <div><b>{fmtNum(avg.c)}</b><span>{t('Carbs')}</span></div>
         <div><b>{fmtNum(avg.f)}</b><span>{t('Fat')}</span></div>
       </div>
+      {avgFluid && <div className="muted small" style={{ marginTop: 10, textAlign: 'center' }}>{t('Fluid: {0} a day on average', fmtL(avgFluid.ml))}</div>}
     </div>}
   </div>
 }

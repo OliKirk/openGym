@@ -97,7 +97,7 @@ describe('the log', () => {
   })
 
   it('gives older profiles a full, empty shape', () => {
-    expect(nutritionOf({})).toEqual({ goals: null, profile: null, log: {}, foods: [] })
+    expect(nutritionOf({})).toEqual({ goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null })
   })
 })
 
@@ -119,5 +119,51 @@ describe('saved foods', () => {
     expect(filterFoods(foods, 'arla skyr').map(f => f.name)).toEqual(['Skyr naturel'])
     expect(filterFoods(foods, 'arla')).toHaveLength(2)
     expect(filterFoods(foods, '')).toHaveLength(3)
+  })
+})
+
+import { addDrink, removeDrink, dayDrinks, dayFluidMl, drinkTotals, fluidByKind, suggestWaterMl, waterGoalOf, averageFluidMl, DEFAULT_WATER_ML } from './nutrition.js'
+
+describe('drinks', () => {
+  it('logs fluid and counts every drink as fluid', () => {
+    const s = {}
+    addDrink(s, '2026-10-23', 'water', 500, 1)
+    addDrink(s, '2026-10-23', 'coffee', 250, 2)
+    addDrink(s, '2026-10-23', 'milk', 250, 3)
+    expect(dayFluidMl(s, '2026-10-23')).toBe(1000)
+    expect(fluidByKind(s, '2026-10-23').map(x => x.kind)).toEqual(['water', 'coffee', 'milk'])
+  })
+
+  it('adds the energy of drinks to the day, not of water', () => {
+    const s = {}
+    addDrink(s, '2026-10-23', 'water', 1000, 1)
+    expect(dayTotals(s, '2026-10-23').kcal).toBe(0)
+    addDrink(s, '2026-10-23', 'milk', 500, 2)
+    addEntry(s, '2026-10-23', quickEntry('', { kcal: 500, p: 30 }, 'lunch', 3))
+    expect(dayTotals(s, '2026-10-23')).toEqual({ kcal: 730, p: 47.5, c: 23.5, f: 7.5 })
+    expect(drinkTotals(dayDrinks(s, '2026-10-23')).kcal).toBe(230)
+  })
+
+  it('ignores empty amounts and removes drinks; an emptied day disappears', () => {
+    const s = {}
+    expect(addDrink(s, '2026-10-23', 'water', 0)).toBeNull()
+    const d = addDrink(s, '2026-10-23', 'nonsense', 330, 1)
+    expect(d.kind).toBe('water')
+    removeDrink(s, '2026-10-23', d.id)
+    expect(s.nutrition.drinks['2026-10-23']).toBeUndefined()
+  })
+
+  it('suggests a fluid goal from body weight and falls back to a default', () => {
+    expect(suggestWaterMl(68.7)).toBe(3000)
+    expect(suggestWaterMl(null)).toBe(DEFAULT_WATER_ML)
+    expect(waterGoalOf({})).toBe(DEFAULT_WATER_ML)
+    expect(waterGoalOf({ nutrition: { waterGoal: 3200 } })).toBe(3200)
+  })
+
+  it('averages fluid over days with drinks logged', () => {
+    const s = {}
+    addDrink(s, '2026-10-23', 'water', 3000, 1)
+    addDrink(s, '2026-10-20', 'water', 2000, 2)
+    expect(averageFluidMl(s, '2026-10-23')).toEqual({ days: 2, ml: 2500 })
   })
 })

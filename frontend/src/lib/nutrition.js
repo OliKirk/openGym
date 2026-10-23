@@ -8,6 +8,9 @@
 //   log     { [iso]: [entry] }                    what was eaten, one list per day
 //   foods   [food]                                saved and recently used foods, newest first
 //
+//   drinks  { [iso]: [drink] }                    what was drunk, one list per day
+//   waterGoal  ml per day, null until set (DEFAULT_WATER_ML is shown meanwhile)
+//
 //   food   { id, name, brand, code, per100: { kcal, p, c, f }, serving, t }   serving = grams in one portion
 //   entry  { id, meal, name, brand, foodId, grams, per100, t }               a food in an amount
 //          { id, meal, name, quick: { kcal, p, c, f }, t }                     a quick add: just numbers
@@ -44,7 +47,7 @@ export function macros(m) {
 }
 
 export function emptyNutrition() {
-  return { goals: null, profile: null, log: {}, foods: [] }
+  return { goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null }
 }
 
 /** The nutrition block of a profile, always in its full shape — older profiles have none. */
@@ -56,6 +59,8 @@ export function nutritionOf(S) {
     profile: n.profile || null,
     log: n.log && typeof n.log === 'object' ? n.log : {},
     foods: Array.isArray(n.foods) ? n.foods : [],
+    drinks: n.drinks && typeof n.drinks === 'object' ? n.drinks : {},
+    waterGoal: num(n.waterGoal) || null,
   }
 }
 
@@ -133,7 +138,12 @@ export function sumTotals(list) {
 }
 
 export const dayEntries = (S, iso) => nutritionOf(S).log[iso] || []
-export const dayTotals = (S, iso) => sumTotals(dayEntries(S, iso))
+/** Everything eaten and drunk on a day: drinks with energy (milk, juice…) count like food. */
+export const dayTotals = (S, iso) => addTotals(sumTotals(dayEntries(S, iso)), drinkTotals(dayDrinks(S, iso)))
+
+function addTotals(a, b) {
+  return { kcal: Math.round(a.kcal + b.kcal), p: round1(a.p + b.p), c: round1(a.c + b.c), f: round1(a.f + b.f) }
+}
 export const mealEntries = (S, iso, meal) => dayEntries(S, iso).filter(e => (e.meal || 'snacks') === meal)
 
 /** Progress against a goal, 0…1 (capped), and what is left (negative = over). */
@@ -165,9 +175,10 @@ export function averageTotals(S, iso, days = 7) {
   let count = 0
   const sum = { kcal: 0, p: 0, c: 0, f: 0 }
   for (let i = 0; i < days; i++) {
-    const list = n.log[shiftDay(iso, -i)]
+    const d = shiftDay(iso, -i)
+    const list = n.log[d]
     if (!list || !list.length) continue
-    const t = sumTotals(list)
+    const t = dayTotals(S, d)
     count++
     sum.kcal += t.kcal; sum.p += t.p; sum.c += t.c; sum.f += t.f
   }
@@ -248,4 +259,92 @@ export function removeEntry(s, iso, id) {
   const rest = (n.log[iso] || []).filter(e => e.id !== id)
   if (rest.length) n.log[iso] = rest
   else delete n.log[iso]
+}
+
+/* ----------------------------------------------------------------- drinks -- */
+
+// Values per 100 ml. Water, coffee and tea count as fluid only; the rest also count as food.
+// Numbers are typical Danish products (letmælk, appelsinjuice, sodavand med sukker…).
+export const DRINKS = [
+  { id: 'water', label: 'Water', per100: { kcal: 0, p: 0, c: 0, f: 0 } },
+  { id: 'coffee', label: 'Coffee', per100: { kcal: 2, p: 0.1, c: 0, f: 0 } },
+  { id: 'tea', label: 'Tea', per100: { kcal: 1, p: 0, c: 0.2, f: 0 } },
+  { id: 'milk', label: 'Milk', per100: { kcal: 46, p: 3.5, c: 4.7, f: 1.5 } },
+  { id: 'juice', label: 'Juice', per100: { kcal: 45, p: 0.7, c: 10, f: 0.1 } },
+  { id: 'soda', label: 'Soda', per100: { kcal: 42, p: 0, c: 10.6, f: 0 } },
+  { id: 'zero', label: 'Soda (zero)', per100: { kcal: 0.5, p: 0, c: 0, f: 0 } },
+  { id: 'sports', label: 'Sports drink', per100: { kcal: 25, p: 0, c: 6, f: 0 } },
+  { id: 'shake', label: 'Protein shake', per100: { kcal: 60, p: 8, c: 4, f: 1 } },
+]
+export const DRINK_BY_ID = Object.fromEntries(DRINKS.map(d => [d.id, d]))
+
+/** What a day's fluid goal is when none is set: 35 ml per kg, plus training, rounded — or 2.5 l. */
+export const DEFAULT_WATER_ML = 2500
+export function suggestWaterMl(weightKg) {
+  const w = num(weightKg)
+  if (!w) return DEFAULT_WATER_ML
+  return Math.round((w * 35 + 500) / 250) * 250
+}
+export const waterGoalOf = S => nutritionOf(S).waterGoal || DEFAULT_WATER_ML
+
+export const dayDrinks = (S, iso) => nutritionOf(S).drinks[iso] || []
+
+/** Total millilitres drunk; every drink is fluid, whatever else it brings. */
+export const dayFluidMl = (S, iso) => Math.round(dayDrinks(S, iso).reduce((n, d) => n + num(d.ml), 0))
+
+/** A drink's energy and macros, from its stored per-100 ml values. */
+export function drinkMacros(d) {
+  const per100 = d?.per100 || DRINK_BY_ID[d?.kind]?.per100 || ZERO
+  return scale(per100, d?.ml)
+}
+
+export function drinkTotals(list) {
+  const out = { kcal: 0, p: 0, c: 0, f: 0 }
+  for (const d of list || []) {
+    const m = drinkMacros(d)
+    out.kcal += m.kcal; out.p += m.p; out.c += m.c; out.f += m.f
+  }
+  return { kcal: Math.round(out.kcal), p: round1(out.p), c: round1(out.c), f: round1(out.f) }
+}
+
+/** Millilitres per kind of drink on a day, largest first: [{ kind, label, ml }]. */
+export function fluidByKind(S, iso) {
+  const by = new Map()
+  for (const d of dayDrinks(S, iso)) {
+    const k = DRINK_BY_ID[d.kind] ? d.kind : 'other'
+    by.set(k, (by.get(k) || 0) + num(d.ml))
+  }
+  return [...by.entries()].map(([kind, ml]) => ({ kind, label: DRINK_BY_ID[kind]?.label || 'Other', ml: Math.round(ml) })).sort((a, b) => b.ml - a.ml)
+}
+
+/** A new drink of a known kind (inside a store update). */
+export function addDrink(s, iso, kind, ml, now = Date.now()) {
+  const n = ensureNutrition(s)
+  const known = DRINK_BY_ID[kind] || DRINK_BY_ID.water
+  const amount = Math.round(num(ml))
+  if (!amount) return null
+  const d = { id: now.toString(36) + Math.random().toString(36).slice(2, 7), kind: known.id, ml: amount, per100: macros(known.per100), t: now }
+  n.drinks = n.drinks || {}
+  n.drinks[iso] = [...(n.drinks[iso] || []), d]
+  return d
+}
+
+export function removeDrink(s, iso, id) {
+  const n = ensureNutrition(s)
+  const rest = (n.drinks?.[iso] || []).filter(d => d.id !== id)
+  if (rest.length) n.drinks[iso] = rest
+  else if (n.drinks) delete n.drinks[iso]
+}
+
+/** Average fluid over the `days` days ending on `iso`, counting only days with drinks logged. */
+export function averageFluidMl(S, iso, days = 7) {
+  const n = nutritionOf(S)
+  let count = 0, sum = 0
+  for (let i = 0; i < days; i++) {
+    const list = n.drinks[shiftDay(iso, -i)]
+    if (!list || !list.length) continue
+    count++
+    sum += list.reduce((a, d) => a + num(d.ml), 0)
+  }
+  return count ? { days: count, ml: Math.round(sum / count) } : null
 }
