@@ -7,12 +7,13 @@ import {
   rememberFood, filterFoods, foodEntry, quickEntry, addEntry, updateEntry, removeEntry, ensureNutrition, scale,
   DRINKS, DRINK_BY_ID, dayDrinks, dayFluidMl, drinkMacros, fluidByKind, waterGoalOf, suggestWaterMl, addDrink, removeDrink, averageFluidMl,
   rememberDrink, drinkName,
+  supplementsOf, takenOn, toggleTaken, takeAll, supplementStreak, setSupplements,
 } from '../lib/nutrition.js'
 import { lookupBarcode, searchFoods } from '../lib/food-api.js'
 import { fmtDate, fmtNum, todayISO } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
 import Icon from '../components/Icon.jsx'
-import { Button, NumberField, SearchField, Segmented, SelectRow, TextField } from '../components/ui.jsx'
+import { Button, Check, NumberField, SearchField, Segmented, SelectRow, TextField } from '../components/ui.jsx'
 import { confirmSheet } from '../sheets.jsx'
 import './nutrition.css'
 
@@ -590,6 +591,69 @@ function WaterCard({ S, iso }) {
   </div>
 }
 
+
+/* ------------------------------------------------------------ supplements -- */
+
+function SupplementEditor({ close }) {
+  const S = useStore(st => st.S)
+  const [rows, setRows] = useState(() => supplementsOf(S).map(x => ({ ...x })))
+  const set = (i, k, v) => setRows(r => r.map((x, j) => (j === i ? { ...x, [k]: v } : x)))
+  const save = () => {
+    update(s => setSupplements(s, rows))
+    close(); toast(t('Supplements saved'))
+  }
+  return <>
+    <h3>{t('Your supplements')}</h3>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('Name and daily dose. Remove what you no longer take, or add something new.')}</div>
+    {rows.map((x, i) => <div key={x.id || i} className="nut-sup-edit">
+      <TextField value={x.name} maxLength={60} placeholder={t('Name')} onChange={e => set(i, 'name', e.target.value)} />
+      <TextField value={x.dose} maxLength={40} placeholder={t('Dose')} onChange={e => set(i, 'dose', e.target.value)} />
+      <button className="nut-x" onClick={() => setRows(r => r.filter((_, j) => j !== i))} aria-label={t('Remove')}><Icon name="trash" /></button>
+    </div>)}
+    <Button variant="ghost" icon="plus" onClick={() => setRows(r => [...r, { name: '', dose: '' }])}>{t('Add supplement')}</Button>
+    <div style={{ height: 10 }} />
+    <Button variant="primary" onClick={save}>{t('Save')}</Button>
+    <div style={{ height: 8 }} />
+    <Button variant="ghost" className="dim" onClick={close}>{t('Cancel')}</Button>
+  </>
+}
+
+const supplementEditor = () => openSheet(close => <SupplementEditor close={close} />)
+
+function SupplementCard({ S, iso }) {
+  const list = supplementsOf(S)
+  const taken = new Set(takenOn(S, iso))
+  const done = list.length > 0 && taken.size === list.length
+  const streak = supplementStreak(S, todayISO())
+  if (!list.length) return <div className="card nut-sup">
+    <div className="row between"><div className="muted small">{t('Supplements')}</div>
+      <button className="nut-x" onClick={supplementEditor} aria-label={t('Edit supplements')}><Icon name="pencil" /></button></div>
+    <Button variant="tinted" icon="plus" onClick={supplementEditor}>{t('Add your supplements')}</Button>
+  </div>
+  return <div className={'card nut-sup' + (done ? ' done' : '')}>
+    <div className="row between" style={{ alignItems: 'flex-start' }}>
+      <div>
+        <div className="muted small">{t('Supplements')}</div>
+        <div className="nut-sup-n"><b>{taken.size}</b><span> / {list.length} {t('taken')}</span></div>
+      </div>
+      <div className="row" style={{ gap: 6 }}>
+        {streak > 0 && <span className="nut-streak"><Icon name="flame" />{t(streak === 1 ? '{0} day' : '{0} days', streak)}</span>}
+        <button className="nut-x" onClick={supplementEditor} aria-label={t('Edit supplements')}><Icon name="pencil" /></button>
+      </div>
+    </div>
+    <div className="nut-sup-list">
+      {list.map(x => <div key={x.id} className={'nut-sup-row' + (taken.has(x.id) ? ' on' : '')} onClick={() => update(s => toggleTaken(s, iso, x.id))}>
+        <Check checked={taken.has(x.id)} onChange={() => {}} label={x.name} />
+        <span className="nut-sup-name">{x.name}</span>
+        <span className="muted small">{x.dose}</span>
+      </div>)}
+    </div>
+    {done
+      ? <div className="nut-sup-ok small"><Icon name="checkCircle" /> {t('All taken today. Nice!')}</div>
+      : <Button variant="tinted" icon="check" onClick={() => { update(s => takeAll(s, iso)); toast(t('All supplements ticked off')) }}>{t('Took them all')}</Button>}
+  </div>
+}
+
 /* ------------------------------------------------------------------- page -- */
 
 export default function Nutrition() {
@@ -637,6 +701,8 @@ export default function Nutrition() {
     </div>
 
     <WaterCard S={S} iso={iso} />
+
+    <SupplementCard S={S} iso={iso} />
 
     {MEALS.map(meal => {
       const list = entries.filter(e => (e.meal || 'snacks') === meal)

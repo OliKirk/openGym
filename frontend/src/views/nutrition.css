@@ -86,3 +86,17 @@
 .nut-sub{font-size:13px;color:var(--label-2);margin:10px 2px 6px}
 .nut-product{display:flex;flex-direction:column;gap:2px;background:var(--surface-2);border-radius:var(--r);padding:10px 12px;margin-top:12px}
 .nut-product b{font-size:16px}
+
+/* supplements */
+.nut-sup-n{margin-top:3px}
+.nut-sup-n b{font-size:26px;font-weight:700;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+.nut-sup-n span{color:var(--label-2);font-size:15px}
+.nut-streak{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:var(--orange);background:color-mix(in srgb,var(--orange) 14%,transparent);padding:4px 9px;border-radius:999px}
+.nut-sup-list{margin:10px 0 12px;display:flex;flex-direction:column}
+.nut-sup-row{display:flex;align-items:center;gap:12px;padding:9px 2px;border-top:var(--hair) solid var(--sep);cursor:pointer;-webkit-tap-highlight-color:transparent}
+.nut-sup-row:first-child{border-top:0}
+.nut-sup-name{flex:1;font-size:16px}
+.nut-sup-row.on .nut-sup-name{color:var(--label-2);text-decoration:line-through;text-decoration-color:var(--label-3)}
+.nut-sup-ok{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--acc);font-weight:600;padding:6px 0 2px}
+.nut-sup.done{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--acc) 45%,transparent)}
+.nut-sup-edit{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr) auto;gap:8px;align-items:center;margin-bottom:8px}

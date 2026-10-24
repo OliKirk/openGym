@@ -97,7 +97,7 @@ describe('the log', () => {
   })
 
   it('gives older profiles a full, empty shape', () => {
-    expect(nutritionOf({})).toEqual({ goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null, savedDrinks: [] })
+    expect(nutritionOf({})).toEqual({ goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null, savedDrinks: [], supplements: null, supTaken: {} })
   })
 })
 
@@ -197,5 +197,43 @@ describe('scanned drinks', () => {
     rememberDrink(s, { ...monster, name: 'Monster Energy Original' }, 3)
     expect(s.nutrition.savedDrinks.map(x => x.name)).toEqual(['Monster Energy Original', 'Faxe Kondi Booster'])
     expect(s.nutrition.savedDrinks[0].serving).toBe(500)
+  })
+})
+
+import { supplementsOf, takenOn, allTakenOn, toggleTaken, takeAll, supplementStreak, setSupplements, DEFAULT_SUPPLEMENTS } from './nutrition.js'
+
+describe('supplements', () => {
+  it('starts from the default list', () => {
+    expect(supplementsOf({}).map(x => x.name)).toEqual(['Kreatin', 'Omega 3', 'Multivitamin', 'Magnesium', 'C-vitamin'])
+  })
+
+  it('ticks on and off per day, and all at once', () => {
+    const s = {}
+    toggleTaken(s, '2026-10-24', 'creatine')
+    expect(takenOn(s, '2026-10-24')).toEqual(['creatine'])
+    toggleTaken(s, '2026-10-24', 'creatine')
+    expect(s.nutrition.supTaken['2026-10-24']).toBeUndefined()
+    takeAll(s, '2026-10-24')
+    expect(allTakenOn(s, '2026-10-24')).toBe(true)
+    expect(takenOn(s, '2026-10-23')).toEqual([])
+  })
+
+  it('counts a streak that survives an unfinished today', () => {
+    const s = {}
+    takeAll(s, '2026-10-21'); takeAll(s, '2026-10-22'); takeAll(s, '2026-10-23')
+    expect(supplementStreak(s, '2026-10-24')).toBe(3)
+    takeAll(s, '2026-10-24')
+    expect(supplementStreak(s, '2026-10-24')).toBe(4)
+    toggleTaken(s, '2026-10-22', 'vitc', false)
+    expect(supplementStreak(s, '2026-10-24')).toBe(2)
+  })
+
+  it('edits the list, keeping ids and dropping empty names; removed items no longer count', () => {
+    const s = {}
+    takeAll(s, '2026-10-24')
+    setSupplements(s, [...DEFAULT_SUPPLEMENTS.slice(0, 2), { name: '  ' }, { name: 'D-vitamin', dose: '1 pille' }])
+    expect(supplementsOf(s).map(x => x.name)).toEqual(['Kreatin', 'Omega 3', 'D-vitamin'])
+    expect(takenOn(s, '2026-10-24')).toEqual(['creatine', 'omega3'])
+    expect(allTakenOn(s, '2026-10-24')).toBe(false)
   })
 })

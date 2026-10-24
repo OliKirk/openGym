@@ -47,7 +47,7 @@ export function macros(m) {
 }
 
 export function emptyNutrition() {
-  return { goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null, savedDrinks: [] }
+  return { goals: null, profile: null, log: {}, foods: [], drinks: {}, waterGoal: null, savedDrinks: [], supplements: null, supTaken: {} }
 }
 
 /** The nutrition block of a profile, always in its full shape — older profiles have none. */
@@ -62,6 +62,8 @@ export function nutritionOf(S) {
     drinks: n.drinks && typeof n.drinks === 'object' ? n.drinks : {},
     waterGoal: num(n.waterGoal) || null,
     savedDrinks: Array.isArray(n.savedDrinks) ? n.savedDrinks : [],
+    supplements: Array.isArray(n.supplements) ? n.supplements : null,
+    supTaken: n.supTaken && typeof n.supTaken === 'object' ? n.supTaken : {},
   }
 }
 
@@ -391,4 +393,62 @@ export function averageFluidMl(S, iso, days = 7) {
     sum += list.reduce((a, d) => a + num(d.ml), 0)
   }
   return count ? { days: count, ml: Math.round(sum / count) } : null
+}
+
+
+/* ------------------------------------------------------------ supplements -- */
+
+// The daily supplements, ticked off once a day. `supplements` is null until the list is edited, and
+// the starter list below shows meanwhile — so a new profile has something to tick from the start.
+export const DEFAULT_SUPPLEMENTS = [
+  { id: 'creatine', name: 'Kreatin', dose: '5 g' },
+  { id: 'omega3', name: 'Omega 3', dose: '2 piller' },
+  { id: 'multi', name: 'Multivitamin', dose: '2 piller' },
+  { id: 'magnesium', name: 'Magnesium', dose: '2 piller' },
+  { id: 'vitc', name: 'C-vitamin', dose: '2 piller' },
+]
+
+export const supplementsOf = S => nutritionOf(S).supplements || DEFAULT_SUPPLEMENTS
+
+/** Ids taken on a day, limited to supplements still on the list. */
+export function takenOn(S, iso) {
+  const ids = new Set(supplementsOf(S).map(x => x.id))
+  return (nutritionOf(S).supTaken[iso] || []).filter(id => ids.has(id))
+}
+
+export function allTakenOn(S, iso) {
+  const list = supplementsOf(S)
+  return list.length > 0 && takenOn(S, iso).length === list.length
+}
+
+/** Ticks a supplement on or off for a day (inside a store update). */
+export function toggleTaken(s, iso, id, on) {
+  const n = ensureNutrition(s)
+  const cur = new Set(n.supTaken[iso] || [])
+  const next = on === undefined ? !cur.has(id) : !!on
+  if (next) cur.add(id); else cur.delete(id)
+  if (cur.size) n.supTaken[iso] = [...cur]
+  else delete n.supTaken[iso]
+}
+
+/** Ticks every supplement for a day (inside a store update). */
+export function takeAll(s, iso) {
+  const n = ensureNutrition(s)
+  n.supTaken[iso] = supplementsOf(s).map(x => x.id)
+}
+
+/** Days in a row, ending today (or yesterday, while today is still open), with every supplement taken. */
+export function supplementStreak(S, today) {
+  let d = allTakenOn(S, today) ? today : shiftDay(today, -1)
+  let n = 0
+  while (allTakenOn(S, d) && n < 3650) { n++; d = shiftDay(d, -1) }
+  return n
+}
+
+/** Replaces the list (inside a store update): names trimmed, empties dropped, ids kept or made. */
+export function setSupplements(s, list) {
+  const n = ensureNutrition(s)
+  n.supplements = (list || [])
+    .map(x => ({ id: x.id || 'sup' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), name: String(x.name || '').trim().slice(0, 60), dose: String(x.dose || '').trim().slice(0, 40) }))
+    .filter(x => x.name)
 }
