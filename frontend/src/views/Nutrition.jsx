@@ -10,6 +10,7 @@ import {
   supplementsOf, takenOn, toggleTaken, takeAll, supplementStreak, setSupplements,
 } from '../lib/nutrition.js'
 import { lookupBarcode, searchFoods } from '../lib/food-api.js'
+import { analyzePhoto, photoTotals } from '../lib/food-photo.js'
 import { fmtDate, fmtNum, todayISO } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
 import Icon from '../components/Icon.jsx'
@@ -293,6 +294,100 @@ function QuickStep({ meal: initialMeal, onAdd, onBack }) {
   </>
 }
 
+/* A photo, shrunk on the phone before it leaves: the longest side to 1024 px as a JPEG, which is
+   plenty for recognising food and keeps the upload small. */
+function shrinkPhoto(file, max = 1024) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file)
+    const img = new Image()
+    img.onload = () => {
+      const k = Math.min(1, max / Math.max(img.naturalWidth, img.naturalHeight))
+      const c = document.createElement('canvas')
+      c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k)
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height)
+      URL.revokeObjectURL(url)
+      resolve(c.toDataURL('image/jpeg', 0.82))
+    }
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('unreadable image')) }
+    img.src = url
+  })
+}
+
+function PhotoStep({ meal: initialMeal, onAdd, onBack }) {
+  const fileRef = useRef(null)
+  const [photo, setPhoto] = useState(null)
+  const [note, setNote] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [problem, setProblem] = useState('')
+  const [items, setItems] = useState(null)       // [{ name, grams, per100, on }]
+  const [meal, setMeal] = useState(initialMeal)
+
+  const choose = async e => {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    try { setPhoto(await shrinkPhoto(file)); setItems(null); setProblem('') }
+    catch { toast(t('That picture couldn’t be read. Try another one.')) }
+  }
+  const analyze = async () => {
+    if (!photo || busy) return
+    setBusy(true); setProblem(''); setItems(null)
+    try {
+      const found = await analyzePhoto(photo, note)
+      if (!found.length) setProblem(t('No food was recognised in the picture. Try a clearer photo, or add it by hand.'))
+      setItems(found.map(it => ({ ...it, on: true })))
+    } catch (e) {
+      setProblem(e?.code === 'setup' ? t('Photo recognition isn’t set up yet: the app needs a free Gemini key (see the setup guide).')
+        : e?.code === 'busy' ? t('The free photo quota is used up for the moment. Try again in a minute.')
+          : t('The photo couldn’t be analysed. Check your connection and try again.'))
+    } finally { setBusy(false) }
+  }
+  const setItem = (i, patch) => setItems(list => list.map((it, j) => (j === i ? { ...it, ...patch } : it)))
+  const chosen = (items || []).filter(it => it.on && it.grams > 0)
+  const total = photoTotals(chosen)
+
+  return <>
+    <div className="row" style={{ gap: 8, marginBottom: 10 }}>
+      <button className="iconbtn" onClick={onBack} aria-label={t('Back')}><Icon name="chevronLeft" /></button>
+      <h3 style={{ margin: 0 }}>{t('Photo of your meal')}</h3>
+    </div>
+    <input ref={fileRef} type="file" accept="image/*" hidden onChange={choose} />
+    {photo
+      ? <button className="nut-photo-prev" onClick={() => fileRef.current?.click()} aria-label={t('Choose another photo')}><img src={photo} alt="" /></button>
+      : <button className="nut-photo-pick" onClick={() => fileRef.current?.click()}><Icon name="camera" /><span>{t('Take or choose a photo')}</span></button>}
+    <div style={{ height: 10 }} />
+    <TextField value={note} maxLength={300} placeholder={t('Anything to add? e.g. with dressing, 2 scoops')} onChange={e => setNote(e.target.value)} />
+    <div style={{ height: 10 }} />
+    {!items && <Button variant="primary" disabled={!photo || busy} onClick={analyze}>{busy ? t('Looking at your food…') : t('Estimate calories')}</Button>}
+    {problem && <div className="small nut-status" style={{ color: 'var(--orange)' }}>{problem}</div>}
+
+    {items && items.length > 0 && <>
+      <h4 className="sec">{t('Found on the plate')}</h4>
+      <div className="sect-b">
+        {items.map((it, i) => <div key={i} className="lrow nut-photo-item">
+          <Check checked={it.on} onChange={() => setItem(i, { on: !it.on })} label={it.name} />
+          <span className="lrow-m">
+            <span className="lrow-t">{it.name}</span>
+            <span className="lrow-s">{fmtNum(Math.round(it.per100.kcal * (Number(it.grams) || 0) / 100))} kcal · {g(it.per100.p * (Number(it.grams) || 0) / 100)} g {t('protein')}</span>
+          </span>
+          <span className="nut-input nut-photo-g"><NumberField value={it.grams} onChange={v => setItem(i, { grams: v })} /><i>g</i></span>
+        </div>)}
+      </div>
+      <div className="muted small nut-status">{t('An estimate from the photo — adjust the grams if they look off.')}</div>
+      <Segmented className="nut-seg" value={meal} onChange={setMeal} options={MEAL_OPTIONS} />
+      <div className="nut-preview">
+        <div><b>{fmtNum(total.kcal)}</b><span>kcal</span></div>
+        <div><b>{g(total.p)}</b><span>{t('Protein')}</span></div>
+        <div><b>{g(total.c)}</b><span>{t('Carbs')}</span></div>
+        <div><b>{g(total.f)}</b><span>{t('Fat')}</span></div>
+      </div>
+      <Button variant="primary" disabled={!chosen.length} onClick={() => onAdd(chosen, meal)}>{t('Add {0} items', chosen.length)}</Button>
+      <div style={{ height: 8 }} />
+      <Button variant="ghost" className="dim" onClick={analyze} disabled={busy}>{busy ? t('Looking at your food…') : t('Try again')}</Button>
+    </>}
+  </>
+}
+
 function AddFood({ iso, meal, close, startWith }) {
   // Selected as stored: nutritionOf builds a fresh empty list for a profile without one, and a
   // selector that returns a new array every time re-renders forever.
@@ -349,6 +444,10 @@ function AddFood({ iso, meal, close, startWith }) {
   if (step === 'scan') return <><h3>{t('Scan barcode')}</h3><Scanner onCode={onCode} onCancel={() => setStep('pick')} /></>
   if (step === 'amount' && food) return <AmountStep food={food} meal={meal} onAdd={add} onBack={() => setStep('pick')} />
   if (step === 'new') return <NewFoodStep initial={draft} onBack={() => setStep('pick')} onSave={f => { setFood(f); setStep('amount') }} />
+  if (step === 'photo') return <PhotoStep meal={meal} onBack={() => setStep('pick')} onAdd={(list, m) => {
+    update(s => { for (const it of list) addEntry(s, iso, foodEntry(it, it.grams, m)) })
+    close(); toast(t('Added {0} items', list.length))
+  }} />
   if (step === 'quick') return <QuickStep meal={meal} onBack={() => setStep('pick')} onAdd={(name, v, m) => {
     update(s => addEntry(s, iso, quickEntry(name, v, m)))
     close(); toast(t('Added'))
@@ -363,6 +462,9 @@ function AddFood({ iso, meal, close, startWith }) {
       </div>
       <Button type="submit" variant="tinted" className="nut-search-btn" disabled={q.trim().length < 2 || busy}>{t('Search')}</Button>
     </form>
+    <button className="nut-photo-btn" onClick={() => setStep('photo')}>
+      <Icon name="sparkles" /><span><b>{t('Photo of your meal')}</b><small>{t('Take a picture and get the calories estimated')}</small></span><Icon name="chevronRight" />
+    </button>
     <div className="nut-actions">
       <button className="nut-action" onClick={() => setStep('scan')}><Icon name="camera" /><span>{t('Scan barcode')}</span></button>
       <button className="nut-action" onClick={() => setStep('quick')}><Icon name="bolt" /><span>{t('Quick add')}</span></button>
