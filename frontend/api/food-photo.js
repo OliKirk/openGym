@@ -7,7 +7,8 @@
 // GEMINI_MODEL can name a specific model; otherwise the first of DEFAULT_MODELS that answers is
 // used. Keeps nothing: the photo goes to Google and the answer comes back.
 
-const DEFAULT_MODELS = ['gemini-flash-latest', 'gemini-3.8-flash', 'gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-2.5-flash']
+// gemini-3.6-flash answered first and well on the free tier (Oct 2026); the rest are fallbacks.
+const DEFAULT_MODELS = ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-flash-latest', 'gemini-3.8-flash', 'gemini-2.5-flash']
 const MAX_BASE64 = 4_000_000
 
 const PROMPT = `Du er ernæringsekspert. Se på billedet af et måltid og find hver ting, der skal spises
