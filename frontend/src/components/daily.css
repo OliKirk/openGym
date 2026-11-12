@@ -1,0 +1,28 @@
+/* Daily tasks card (components/DailyCard.jsx). Reuses the Food tab's field/chip classes
+   (views/nutrition.css) for its sheets, so those are imported here too. */
+@import '../views/nutrition.css';
+
+.dly-n{margin-top:3px}
+.dly-n b{font-size:26px;font-weight:700;letter-spacing:-.025em;font-variant-numeric:tabular-nums}
+.dly-n span{color:var(--label-2);font-size:15px}
+.dly-streak{display:inline-flex;align-items:center;gap:4px;font-size:13px;font-weight:600;color:var(--orange);background:color-mix(in srgb,var(--orange) 14%,transparent);padding:4px 9px;border-radius:999px}
+.dly-list{margin-top:8px;display:flex;flex-direction:column}
+.dly-row{display:flex;align-items:center;gap:12px;padding:10px 0;border-top:var(--hair) solid var(--sep)}
+.dly-row:first-child{border-top:0}
+.dly-mid{flex:1;min-width:0;display:flex;flex-direction:column;gap:6px;text-align:left;padding:0;background:none;color:inherit}
+.dly-top{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.dly-name{font-size:16px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dly-c{flex:none;font-size:13px;color:var(--label-2);font-variant-numeric:tabular-nums}
+.dly-c b{font-size:15px;color:var(--label);font-weight:600}
+.dly-bar{display:block;height:6px;border-radius:3px;background:var(--surface-3);overflow:hidden}
+.dly-bar i{display:block;height:100%;border-radius:3px;background:var(--acc);transition:width .4s var(--ease)}
+.dly-row.on .dly-name{color:var(--label-2)}
+.dly-add{flex:none;min-width:52px;height:34px;padding:0 10px;border-radius:999px;background:var(--acc-soft);color:var(--acc);font-weight:600;font-size:14px;font-variant-numeric:tabular-nums}
+.dly-add:disabled{opacity:.35}
+.dly-add:active:not(:disabled){transform:scale(.95)}
+.dly-ok{display:flex;align-items:center;justify-content:center;gap:6px;color:var(--acc);font-weight:600;padding:8px 0 0}
+.dly.done{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--acc) 45%,transparent)}
+.dly-edit{padding:10px 0;border-top:var(--hair) solid var(--sep)}
+.dly-edit:first-of-type{border-top:0}
+.dly-edit-n{display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) auto;gap:8px;align-items:end;margin-top:8px}
+.dly-unit{min-height:44px;width:100%;min-width:0;border:0;border-radius:var(--r);background:var(--surface-2);color:var(--label);font-size:16px;padding:0 10px}
