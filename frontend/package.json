@@ -21,6 +21,7 @@
     "@capacitor/filesystem": "^7.1.8",
     "@capacitor/local-notifications": "^7.0.7",
     "@capacitor/share": "^7.0.4",
+    "@vercel/blob": "2.8.2",
     "barcode-detector": "^3.2.3",
     "jsqr": "^1.4.0",
     "lean-qr": "^2.7.3",

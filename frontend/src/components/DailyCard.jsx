@@ -1,9 +1,10 @@
 // The daily tasks card on Home (lib/daily.js): each task with today's count, a bar, a quick-add
 // button and a tap on the count to type the exact number (steps read off a watch or phone).
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { addCount, completeGoal, dailyGoalsOf, dailyStreak, progressOn, setCount, setDailyGoals } from '../lib/daily.js'
+import { applyHealthDays, fetchHealthDays, healthCodeOf, makeCode, pushUrl, setHealthCode, stepsGoalOf } from '../lib/health-steps.js'
 import { fmtNum, todayISO } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
 import Icon from './Icon.jsx'
@@ -67,9 +68,81 @@ function GoalsEditor({ close }) {
 }
 const goalsEditor = () => openSheet(close => <GoalsEditor close={close} />)
 
+const SHORTCUT = 'openGym skridt'
+
+function HealthSheet({ close }) {
+  const code = useStore(s => healthCodeOf(s.S))
+  const [state, setState] = useState('')
+  useEffect(() => { if (!code) update(s => setHealthCode(s, makeCode())) }, [code])
+  if (!code) return null
+  const url = pushUrl(window.location.origin, code)
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(url); toast(t('Address copied')) }
+    catch { toast(t('Press and hold the address to copy it')) }
+  }
+  const test = async () => {
+    setState('…')
+    try {
+      const days = await fetchHealthDays(code)
+      const n = Object.keys(days).length
+      update(s => applyHealthDays(s, days))
+      setState(n ? t('It works: steps from {0} days received.', n) : t('Connected, but no steps have arrived yet. Run the shortcut once.'))
+    } catch (e) {
+      setState(e?.code === 'setup' ? t('The server part isn’t switched on yet.') : t('No connection. Try again.'))
+    }
+  }
+  return <>
+    <h3>{t('Steps from Apple Health')}</h3>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('A web app can’t read Apple Health itself, so an iPhone shortcut sends your steps here. Set it up once (about 3 minutes).')}</div>
+    <ol className="hl-steps">
+      <li><b>{t('Copy your personal address')}</b>
+        <div className="hl-url" onClick={copy}>{url}</div>
+        <Button size="sm" variant="tinted" icon="copy" onClick={copy}>{t('Copy address')}</Button></li>
+      <li><b>{t('Make the shortcut')}</b> {t('In the Shortcuts app tap +, and name it “{0}”. Add these actions:', SHORTCUT)}
+        <ul>
+          <li>{t('“Find Health Samples”: Type = Steps, Start Date = Today, Group by = Day, Limit = 1.')}</li>
+          <li>{t('“URL”: paste the address, then tap after = and insert the variable “Health Samples”.')}</li>
+          <li>{t('“Get Contents of URL” (it uses the URL above).')}</li>
+        </ul></li>
+      <li><b>{t('Run it once')}</b> {t('with ▶. Allow access to Health when asked. It answers “Saved in openGym: … steps”.')}</li>
+      <li><b>{t('Make it automatic')}</b> {t('Shortcuts → Automation → New → Time of Day, e.g. 21:00 daily → Run Immediately → run “{0}”. Add more times if you like (12:00, 18:00).', SHORTCUT)}</li>
+    </ol>
+    <div className="row" style={{ gap: 8 }}>
+      <Button variant="primary" onClick={test}>{t('Fetch steps now')}</Button>
+      <Button onClick={() => { window.location.href = 'shortcuts://run-shortcut?name=' + encodeURIComponent(SHORTCUT) }}>{t('Run shortcut')}</Button>
+    </div>
+    {state && <div className="small nut-status">{state}</div>}
+    <div style={{ height: 6 }} />
+    <Button variant="ghost" className="dim" onClick={() => { update(s => setHealthCode(s, null)); close(); toast(t('Apple Health sync turned off')) }}>{t('Turn off')}</Button>
+  </>
+}
+const healthSheet = () => openSheet(close => <HealthSheet close={close} />)
+
+// Pulls the steps the shortcut sent, when Home opens and whenever the app comes back to the front.
+function useHealthPull(code) {
+  const [at, setAt] = useState(null)
+  useEffect(() => {
+    if (!code) return
+    let alive = true
+    const pull = () => fetchHealthDays(code).then(days => {
+      if (!alive) return
+      update(s => applyHealthDays(s, days))
+      setAt(new Date())
+    }).catch(() => {})
+    pull()
+    const onVis = () => { if (document.visibilityState === 'visible') pull() }
+    document.addEventListener('visibilitychange', onVis)
+    return () => { alive = false; document.removeEventListener('visibilitychange', onVis) }
+  }, [code])
+  return at
+}
+
 export default function DailyCard() {
   const S = useStore(s => s.S)
   const iso = todayISO()
+  const code = healthCodeOf(S)
+  const pulledAt = useHealthPull(code)
+  const hasSteps = !!stepsGoalOf(S)
   const goals = progressOn(S, iso)
   const done = goals.filter(g => g.complete).length
   const streak = dailyStreak(S, iso)
@@ -109,5 +182,12 @@ export default function DailyCard() {
       </div>)}
     </div>
     {all && <div className="dly-ok small"><Icon name="checkCircle" /> {t('All done today. Strong work!')}</div>}
+    {hasSteps && <button className="dly-health" onClick={healthSheet}>
+      <Icon name="heart" />
+      <span>{code
+        ? (pulledAt ? t('Steps from Apple Health · updated {0}', pulledAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })) : t('Steps from Apple Health'))
+        : t('Get steps automatically from Apple Health')}</span>
+      <Icon name="chevronRight" />
+    </button>}
   </div>
 }
